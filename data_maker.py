@@ -1,6 +1,7 @@
 import pandas as pd
 import yfinance as yf
 import requests
+import json
 from io import StringIO
 
 # get labels from wikipedia
@@ -46,5 +47,8 @@ open_prices_interp = open_prices_interp.drop(columns=removed_labels)
 
 # remove firms without graph data
 open_prices_interp = open_prices_interp.drop(columns=removed_labels)
+
+with open("firm_industry.json", "w") as f:
+    json.dump(firm_industry_dict, f, indent=4)
 
 open_prices_interp.to_csv('open_prices_interp.csv')
