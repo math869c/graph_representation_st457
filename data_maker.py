@@ -43,12 +43,11 @@ for firm in tickers_with_data:
         removed_labels.append(firm)
 
 tickers_with_data = [f for f in tickers_with_data if f not in removed_labels]
-open_prices_interp = open_prices_interp.drop(columns=removed_labels)
 
 # remove firms without graph data
 open_prices_interp = open_prices_interp.drop(columns=removed_labels)
 
-with open("firm_industry.json", "w") as f:
+### Save the data
+with open("data_folder/firm_industry.json", "w") as f:
     json.dump(firm_industry_dict, f, indent=4)
-
-open_prices_interp.to_csv('open_prices_interp.csv')
+open_prices_interp.to_csv('data_folder/open_prices_interp.csv')

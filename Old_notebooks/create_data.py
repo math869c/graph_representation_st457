@@ -48,7 +48,4 @@ removed_labels.append('FITB')
 # remove firms without graph data
 open_prices_interp = open_prices_interp.drop(columns=removed_labels)
 
-open_prices_interp.to_csv('open_prices_interp.csv')
-
-# # into numpy
-# x = open_prices_interp.to_numpy() #
+open_prices_interp.to_csv('data_folder/open_prices_interp.csv')
