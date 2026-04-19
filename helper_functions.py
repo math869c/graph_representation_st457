@@ -469,7 +469,6 @@ def build_edges(adj_matrix):
     return edge_index, edge_type
 
 
-
 def train_one_epoch_GAT_RotatE(model, loader, A_single_graph, edge_index, edge_type, optimizer, lambda_rotate=0.1):
     model.train()
     total_loss = 0.0
@@ -481,13 +480,14 @@ def train_one_epoch_GAT_RotatE(model, loader, A_single_graph, edge_index, edge_t
         y_hat, z = model(x_batch, A_single_graph)
 
         loss_forecast = F.mse_loss(y_hat, y_batch)
-        loss_graph = rotate_loss(model, z, edge_index, edge_type)
+        loss_graph = rotate_loss_chunked(model, z, edge_index, edge_type)
 
-        total_loss += loss_forecast + lambda_rotate * loss_graph
-        total_count += x_batch.size(0)
-        total_loss.backward()
+        loss = loss_forecast + lambda_rotate * loss_graph
+        loss.backward()
         optimizer.step()
 
+        total_loss += loss.item() * x_batch.size(0)
+        total_count += x_batch.size(0)
 
     return total_loss / total_count
 
@@ -504,24 +504,17 @@ def evaluate_GAT_RotatE(model, loader, A_single_graph):
 
     return total_mse / total_count
 
-# @torch.no_grad()
-# def predict_GAT(model, loader, A_single_graph):
-#     model.eval()
-#     preds = []
-#     ys = []
+@torch.no_grad()
+def predict_GAT_RotatE(model, loader, A_single_graph):
+    model.eval()
+    preds = []
 
-#     for x_batch, y_batch in loader:
-#         current_batch_size = x_batch.size(0)
-#         # Replicate the single graph adjacency matrix for the current batch
-#         A_batched = A_single_graph.unsqueeze(0).repeat(current_batch_size, 1, 1, 1)
+    for x_batch, _ in loader:
+        y_hat, _ = model(x_batch, A_single_graph)
+        preds.append(y_hat.cpu())
 
-#         pred = model(x_batch, A_batched)
+    return torch.cat(preds, dim=0)
 
-#         preds.append(pred.cpu())
-#         ys.append(y_batch)
-
-#     preds = torch.cat(preds, dim=0)
-#     return preds
 
 
 # 6. metrics functions
