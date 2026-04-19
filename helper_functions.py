@@ -175,6 +175,48 @@ def predict_final_model(model, dataloader):
 
     return np.concatenate(preds, axis=0)
 
+def train_with_validation(model, train_loader, val_loader, criterion, optimizer, epochs=100, patience=10):
+    best_val_loss = float("inf")
+    best_state_dict = None
+    patience_counter = 0
+
+    history_metrics = {
+        'train_loss': [],
+        'train_acc': [],
+        'val_loss': [],
+        'val_acc': []
+    }
+
+    for epoch in range(epochs):
+        train_loss, train_acc = train_one_epoch_LSTM(model, train_loader, criterion, optimizer)
+        val_loss, val_acc = evaluate_LSTM(model, val_loader, criterion)
+
+        history_metrics['train_loss'].append(train_loss)
+        history_metrics['train_acc'].append(train_acc)
+        history_metrics['val_loss'].append(val_loss)
+        history_metrics['val_acc'].append(val_acc)
+
+        print(
+            f"Epoch {epoch + 1}/{epochs} | "
+            f"Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | "
+            f"Val Loss: {val_loss:.4f} Val Acc: {val_acc:.4f}"
+        )
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_state_dict = copy.deepcopy(model.state_dict())
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print("Early stopping triggered.")
+                break
+
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+
+    return model, history_metrics, best_val_loss
+
 
 
 # 3. training TGC
@@ -270,7 +312,7 @@ def train_with_validation(model, train_loader, val_loader, criterion, optimizer,
 
     return model, history_metrics, best_val_loss
 
-def training_loop_TGC(train_loader, val_loader, y_test, adj_matrix, F, emb_dim, K_num_relations, num_epochs = 20):
+def training_loop_TGC(train_loader, val_loader, test_loader, y_test, adj_matrix, F, emb_dim, K_num_relations, num_epochs = 20):
     # do the training
     dict_adj_matrices = {'sector':    {'MSE':0, 'model':np.empty, 'matrix':adj_matrix[:,:,0].unsqueeze(-1), 'pred':np.empty},
                         'industry':  {'MSE':0, 'model':np.empty, 'matrix':adj_matrix[:,:,1].unsqueeze(-1), 'pred':np.empty},
@@ -395,7 +437,7 @@ def compute_metrics(y_true, y_pred):
     sharpe = (daily_returns.mean() / std) * np.sqrt(252) if std > 0 else 0.0
 
     # MSE 
-    MSE = np.mean((y_true - y_pred) ** 2, axis=0)
+    MSE = np.mean((y_true - y_pred) ** 2)
 
     return {
         'accuracy': accuracy,
