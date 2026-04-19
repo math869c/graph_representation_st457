@@ -8,6 +8,9 @@ data_folder:
 * firm_industry.json: contains graph information about companies
 * open_prices_interp.csv: contains all stock prices
 
+Best_model: 
+* a folder that includes all the best models 
+
 Py-files:
 * data_maker.py: Creates all files in data_folder 
 * helper_functions.py: Contains fucntions for final data processing, training functions for all models, metric functinos and plotting functions

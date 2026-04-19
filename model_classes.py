@@ -1,6 +1,7 @@
 from keras.layers import *
 import torch.nn as nn
 import torch
+import torch.nn.functional as F
 
 # order of blocks
 # 1. LSTM
@@ -231,10 +232,6 @@ class GATLayer(nn.Module):
 
         return node_feats
     
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 class GAT(nn.Module):
     def __init__(self, c_in, c_hidden, c_out, num_relations, num_heads=4, alpha=0.2):
         super().__init__()
@@ -263,3 +260,73 @@ class GAT(nn.Module):
         x = self.gat2(x, adj)      # [B, N, c_out]
         x = x.squeeze(-1)
         return x
+    
+# RotatE model
+class RotatE(nn.Module):
+    def __init__(self, num_relations, emb_dim):
+        super().__init__()
+
+        self.emb_dim = emb_dim
+
+        # relation phases (angles)
+        self.phase = nn.Parameter(torch.randn(num_relations, emb_dim))
+
+    def forward(self, z, edge_index, edge_type):
+        """
+        z: (B, N, 2*d)   <-- must be split into real + imag
+        edge_index: (E, 2)  (u, v)
+        edge_type: (E,)     relation id
+        """
+
+        B, N, D = z.shape
+        d = D // 2
+
+        # split real and imaginary parts
+        z_re, z_im = z[..., :d], z[..., d:]
+
+        # get edges
+        u = edge_index[:, 0]
+        v = edge_index[:, 1]
+        r = edge_type
+
+        # gather embeddings
+        z_u_re = z_re[:, u, :]
+        z_u_im = z_im[:, u, :]
+        z_v_re = z_re[:, v, :]
+        z_v_im = z_im[:, v, :]
+
+        # relation rotation
+        phase = self.phase[r]              
+        r_re = torch.cos(phase)
+        r_im = torch.sin(phase)
+
+        # apply rotation: (a+ib)*(c+id)
+        rot_re = z_u_re * r_re - z_u_im * r_im
+        rot_im = z_u_re * r_im + z_u_im * r_re
+
+        # distance
+        diff_re = rot_re - z_v_re
+        diff_im = rot_im - z_v_im
+
+        score = -torch.sqrt(diff_re.pow(2) + diff_im.pow(2) + 1e-9).sum(dim=-1)
+
+        return score
+    
+class GAT_RotatE(nn.Module):
+    def __init__(self, c_in, c_hidden, emb_dim, num_relations, num_heads=4, alpha=0.2):
+        super().__init__()
+        self.encoder = GAT(
+            c_in=c_in,
+            c_hidden=c_hidden,
+            c_out=2 * emb_dim,
+            num_relations=num_relations,
+            num_heads=num_heads,
+            alpha=alpha
+        )
+        self.regressor = nn.Linear(2 * emb_dim, 1)
+        self.rotate = RotatE(num_relations=num_relations, emb_dim=emb_dim)
+
+    def forward(self, x, adj):
+        z = self.encoder(x, adj)                 # (B, N, 2*emb_dim)
+        y_hat = self.regressor(z).squeeze(-1)   # (B, N)
+        return y_hat, z

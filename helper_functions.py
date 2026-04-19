@@ -408,6 +408,84 @@ def predict_GAT(model, loader, A_single_graph):
     preds = torch.cat(preds, dim=0)
     return preds
 
+# 5. training functions for GAT+RotatE
+def sample_negative_edges(edge_index, num_nodes):
+    """
+    edge_index: (E, 2)
+    returns corrupted edge_index_neg: (E, 2)
+    """
+    neg_edge_index = edge_index.clone()
+    neg_edge_index[:, 1] = torch.randint(
+        low=0, high=num_nodes, size=(edge_index.size(0),), device=edge_index.device
+    )
+    return neg_edge_index
+
+def rotate_loss(model, z, edge_index, edge_type):
+    num_nodes = z.size(1)
+
+    pos_score = model.rotate.score_triples(z, edge_index, edge_type)  # (B, E)
+
+    neg_edge_index = sample_negative_edges(edge_index, num_nodes)
+    neg_score = model.rotate.score_triples(z, neg_edge_index, edge_type)
+
+    loss_pos = -F.logsigmoid(pos_score).mean()
+    loss_neg = -F.logsigmoid(-neg_score).mean()
+
+    return loss_pos + loss_neg
+
+def train_one_epoch_GAT_RotatE(model, loader, A_single_graph, edge_index, edge_type, optimizer, criterion, lambda_rotate=0.1):
+    model.train()
+    total_loss = 0.0
+    total_count = 0
+
+    for x_batch, y_batch in loader:
+        optimizer.zero_grad()
+
+        y_hat, z = model(x_batch, A_single_graph)
+
+        loss_forecast = F.mse_loss(y_hat, yb)
+        loss_graph = rotate_loss(model, z, edge_index, edge_type)
+
+        total_loss += loss_forecast + lambda_rotate * loss_graph
+        total_count += x_batch.size(0)
+        total_loss.backward()
+        optimizer.step()
+
+
+    return total_loss / total_count
+
+@torch.no_grad()
+def evaluate_GAT_RotatE(model, loader, A_single_graph):
+    model.eval()
+    total_mse = 0.0
+    total_count = 0
+
+    for x_batch, y_batch in loader:
+        y_hat, _ = model(x_batch, A_single_graph)
+        total_mse += F.mse_loss(y_hat, y_batch).item()
+        total_count += x_batch.size(0)
+
+    return total_mse / total_count
+
+# @torch.no_grad()
+# def predict_GAT(model, loader, A_single_graph):
+#     model.eval()
+#     preds = []
+#     ys = []
+
+#     for x_batch, y_batch in loader:
+#         current_batch_size = x_batch.size(0)
+#         # Replicate the single graph adjacency matrix for the current batch
+#         A_batched = A_single_graph.unsqueeze(0).repeat(current_batch_size, 1, 1, 1)
+
+#         pred = model(x_batch, A_batched)
+
+#         preds.append(pred.cpu())
+#         ys.append(y_batch)
+
+#     preds = torch.cat(preds, dim=0)
+#     return preds
+
 
 # 6. metrics functions
 def compute_metrics(y_true, y_pred):
