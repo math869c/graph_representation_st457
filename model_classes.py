@@ -2,7 +2,12 @@ from keras.layers import *
 import torch.nn as nn
 import torch
 
+# order of blocks
+# 1. LSTM
+# 2. TGC
+# 3. GAT
 
+# LSTM model
 class LSTMRegressor(nn.Module):
     def __init__(self, input_size, hidden_units, output_size, dropout_rate):
         super().__init__()
@@ -114,3 +119,147 @@ class TGCModel(nn.Module):
         H = self.tgc(E, A)                # combines embeddings and adjacency matrix
         y_hat = self.head(H).squeeze(-1)  # makes N predictions
         return y_hat
+
+# GAT model
+class GATLayer(nn.Module):
+    """
+    From seminar 7 with minor adjustments 
+    """
+
+    def __init__(self, c_in, c_out, num_relations, num_heads=1, concat_heads=True, alpha=0.2):
+        """
+        Inputs:
+            c_in - Dimensionality of input features
+            c_out - Dimensionality of output features
+            num_heads - Number of heads, i.e. attention mechanisms to apply in parallel. The
+                        output features are equally split up over the heads if concat_heads=True.
+            concat_heads - If True, the output of the different heads is concatenated instead of averaged.
+            alpha - Negative slope of the LeakyReLU activation.
+        """
+        super().__init__()
+        self.num_heads = num_heads
+        self.concat_heads = concat_heads
+        self.num_relations = num_relations
+
+        if self.concat_heads:
+            assert (
+                c_out % num_heads == 0
+            ), "Number of output features must be a multiple of the count of heads."
+            c_out = c_out // num_heads
+
+        # Sub-modules and parameters needed in the layer
+        self.projections = nn.ModuleList([nn.Linear(c_in, c_out * num_heads, bias=False) for _ in range(num_relations)])
+        self.a = nn.Parameter(torch.Tensor(num_relations, num_heads, 2 * c_out))
+        self.leakyrelu = nn.LeakyReLU(alpha)
+
+        # Initialization from the original implementation
+        for proj in self.projections:
+            nn.init.xavier_uniform_(proj.weight.data, gain=1.414)
+        nn.init.xavier_uniform_(self.a.data, gain=1.414)
+
+    def forward(self, node_feats, adj_matrix, print_attn_probs=False):
+        """
+        Inputs:
+            node_feats - Input features of the node. Shape: [batch_size, c_in]
+            adj_matrix - Adjacency matrix including self-connections. Shape: [batch_size, num_nodes, num_nodes]
+            print_attn_probs - If True, the attention weights are printed during the forward pass (for debugging purposes)
+        """
+        batch_size, num_nodes = node_feats.size(0), node_feats.size(1)
+        R = self.num_relations
+        if adj_matrix.dim() == 3:
+            adj_matrix = adj_matrix.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+
+        # We have only changed this little part to include multiple relations
+        rel_outputs = []
+        node_feats_input = node_feats
+
+        for r in range(R):
+            adj_r = adj_matrix[:,:,:, r]
+
+            # Apply linear layer and sort nodes by head
+            node_feats_r = self.projections[r](node_feats_input)
+
+            node_feats_r = node_feats_r.view(batch_size, num_nodes, self.num_heads, -1)
+
+            # We need to calculate the attention logits for every edge in the adjacency matrix
+            # Doing this on all possible combinations of nodes is very expensive
+            # => Create a tensor of [W*h_i||W*h_j] with i and j being the indices of all edges
+            edges = adj_r.nonzero(as_tuple=False)  # Returns indices where the adjacency matrix is not 0 => edges
+
+            node_feats_flat = node_feats_r.view(batch_size * num_nodes, self.num_heads, -1)
+            edge_indices_row = edges[:, 0] * num_nodes + edges[:, 1]
+            edge_indices_col = edges[:, 0] * num_nodes + edges[:, 2]
+            a_input = torch.cat(
+                [
+                    torch.index_select(
+                        input=node_feats_flat, index=edge_indices_row, dim=0
+                    ),
+                    torch.index_select(
+                        input=node_feats_flat, index=edge_indices_col, dim=0
+                    ),
+                ],
+                dim=-1,
+            )  # Index select returns a tensor with node_feats_flat being indexed at the desired positions along dim=0
+
+            # Calculate attention MLP output (independent for each head)
+            attn_logits = torch.einsum("ehc,hc->eh", a_input, self.a[r])
+            attn_logits = self.leakyrelu(attn_logits)
+
+            # Map list of attention values back into a matrix
+            attn_matrix = attn_logits.new_full((batch_size, num_nodes, num_nodes, self.num_heads), -9e15)
+            mask = adj_r != 0
+            attn_matrix[mask[..., None].repeat(1, 1, 1, self.num_heads)] = attn_logits.reshape(-1)
+
+            # Weighted average of attention
+            attn_probs = nn.softmax(attn_matrix, dim=2)
+
+            if print_attn_probs:
+                print(
+                    "Attention probs\n", attn_probs.permute(0, 3, 1, 2)
+                )  # show the attention weight for each edge
+            out_r = torch.einsum("bijh,bjhc->bihc", attn_probs, node_feats_r)
+            rel_outputs.append(out_r)
+
+        # sum relation-specific messages
+        node_feats = torch.stack(rel_outputs, dim=0).sum(dim=0)
+
+        # If heads should be concatenated, we can do this by reshaping. Otherwise, take mean
+        if self.concat_heads:
+            node_feats = node_feats.reshape(batch_size, num_nodes, -1)
+        else:
+            node_feats = node_feats.mean(dim=2)
+
+        return node_feats
+    
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class GAT(nn.Module):
+    def __init__(self, c_in, c_hidden, c_out, num_relations, num_heads=4, alpha=0.2):
+        super().__init__()
+
+        self.gat1 = GATLayer(
+            c_in=c_in,
+            c_out=c_hidden,
+            num_relations = num_relations,
+            num_heads=num_heads,
+            concat_heads=True,
+            alpha=alpha
+        )
+
+        self.gat2 = GATLayer(
+            c_in=c_hidden,
+            c_out=c_out,
+            num_relations = num_relations,
+            num_heads=1,
+            concat_heads=False,
+            alpha=alpha
+        )
+
+    def forward(self, x, adj):
+        x = self.gat1(x, adj)      # [B, N, c_hidden]
+        x = nn.elu(x)
+        x = self.gat2(x, adj)      # [B, N, c_out]
+        x = x.squeeze(-1)
+        return x

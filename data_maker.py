@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import requests
 import json
@@ -51,3 +52,33 @@ open_prices_interp = open_prices_interp.drop(columns=removed_labels)
 with open("data_folder/firm_industry.json", "w") as f:
     json.dump(firm_industry_dict, f, indent=4)
 open_prices_interp.to_csv('data_folder/open_prices_interp.csv')
+
+set_of_sector = set()
+set_of_industry = set()
+for val in firm_industry_dict.values():
+  sector, industry = val
+  set_of_sector.add(sector)
+  set_of_industry.add(industry)
+# Make data more stationary by using log and diff, so we get the relative changes  (I thought that an LSTM model could predict non-stationary time-series, but it was a bit tough for it)
+x = open_prices_interp.to_numpy()
+x_returns = np.diff(np.log(x),axis=0)
+# calculate correlation
+corr_ = np.corrcoef(x_returns.T)
+
+# make adjacency matrix
+firm_tickers = tickers_with_data # I have removed  '^GSPC', so no difference now
+N = len(firm_tickers)
+A = np.zeros((N, N, 3)) # 2 types of relation, industry and sector
+
+for i, ti in enumerate(firm_tickers):
+    for j, tj in enumerate(firm_tickers):
+        if ti == tj:
+            continue
+        if firm_industry_dict[ti][1] == firm_industry_dict[tj][1]:
+            A[i, j, 0] = 1   # connection type 1
+        elif firm_industry_dict[ti][0] == firm_industry_dict[tj][0]:
+            A[i, j, 1] = 1   # connection type 2
+# add the correlation matrix to adjacency matrix
+A[:,:,2] = corr_  # this correlation is on the entire period, perhaps just do it for training period
+
+np.save("data_folder/adjacency_matrix.npy", A)
