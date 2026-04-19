@@ -97,9 +97,9 @@ class Header(nn.Module):
     super().__init__()
     self.model = nn.Sequential(
         nn.Linear(gcn_dim, 64),
-        nn.ReLU(),
-        nn.Dropout(0.2),
-        nn.Linear(64, 1)
+        nn.ReLU(), # I Think this should be commented out
+        nn.Dropout(0.2),  # I Think this should be commented out
+        nn.Linear(64, 1)  # I Think this should be commented out
     )
 
   def forward(self, x):
