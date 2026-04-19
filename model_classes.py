@@ -271,46 +271,44 @@ class RotatE(nn.Module):
         # relation phases (angles)
         self.phase = nn.Parameter(torch.randn(num_relations, emb_dim))
 
+    def score_triples(self, z, edge_index, edge_type):
+            """
+            z: (B, N, 2*d)
+            edge_index: (E, 2)
+            edge_type: (E,)
+            returns: (B, E)
+            """
+            B, N, D = z.shape
+            d = D // 2
+            assert D == 2 * self.emb_dim, f"Expected last dim {2*self.emb_dim}, got {D}"
+
+            z_re = z[..., :d]
+            z_im = z[..., d:]
+
+            u = edge_index[:, 0]
+            v = edge_index[:, 1]
+            r = edge_type
+
+            zu_re = z_re[:, u, :]
+            zu_im = z_im[:, u, :]
+            zv_re = z_re[:, v, :]
+            zv_im = z_im[:, v, :]
+
+            phase = self.phase[r]
+            r_re = torch.cos(phase).unsqueeze(0)
+            r_im = torch.sin(phase).unsqueeze(0)
+
+            rot_re = zu_re * r_re - zu_im * r_im
+            rot_im = zu_re * r_im + zu_im * r_re
+
+            diff_re = rot_re - zv_re
+            diff_im = rot_im - zv_im
+
+            score = -(diff_re.pow(2) + diff_im.pow(2)).sum(dim=-1)
+            return score
+
     def forward(self, z, edge_index, edge_type):
-        """
-        z: (B, N, 2*d)   <-- must be split into real + imag
-        edge_index: (E, 2)  (u, v)
-        edge_type: (E,)     relation id
-        """
-
-        B, N, D = z.shape
-        d = D // 2
-
-        # split real and imaginary parts
-        z_re, z_im = z[..., :d], z[..., d:]
-
-        # get edges
-        u = edge_index[:, 0]
-        v = edge_index[:, 1]
-        r = edge_type
-
-        # gather embeddings
-        z_u_re = z_re[:, u, :]
-        z_u_im = z_im[:, u, :]
-        z_v_re = z_re[:, v, :]
-        z_v_im = z_im[:, v, :]
-
-        # relation rotation
-        phase = self.phase[r]              
-        r_re = torch.cos(phase)
-        r_im = torch.sin(phase)
-
-        # apply rotation: (a+ib)*(c+id)
-        rot_re = z_u_re * r_re - z_u_im * r_im
-        rot_im = z_u_re * r_im + z_u_im * r_re
-
-        # distance
-        diff_re = rot_re - z_v_re
-        diff_im = rot_im - z_v_im
-
-        score = -torch.sqrt(diff_re.pow(2) + diff_im.pow(2) + 1e-9).sum(dim=-1)
-
-        return score
+        return self.score_triples(z, edge_index, edge_type)
     
 class GAT_RotatE(nn.Module):
     def __init__(self, c_in, c_hidden, emb_dim, num_relations, num_heads=4, alpha=0.2):

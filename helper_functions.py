@@ -410,30 +410,67 @@ def predict_GAT(model, loader, A_single_graph):
 
 # 5. training functions for GAT+RotatE
 def sample_negative_edges(edge_index, num_nodes):
-    """
-    edge_index: (E, 2)
-    returns corrupted edge_index_neg: (E, 2)
-    """
     neg_edge_index = edge_index.clone()
     neg_edge_index[:, 1] = torch.randint(
-        low=0, high=num_nodes, size=(edge_index.size(0),), device=edge_index.device
+        0, num_nodes, (edge_index.size(0),), device=edge_index.device
     )
     return neg_edge_index
 
-def rotate_loss(model, z, edge_index, edge_type):
+def rotate_loss_chunked(model, z, edge_index, edge_type, chunk_size=4000):
+    """
+    z: (B, N, 2*d)
+    edge_index: (E, 2)
+    edge_type: (E,)
+    """
     num_nodes = z.size(1)
+    E = edge_index.size(0)
 
-    pos_score = model.rotate.score_triples(z, edge_index, edge_type)  # (B, E)
+    total_loss = 0.0
+    n_chunks = 0
 
-    neg_edge_index = sample_negative_edges(edge_index, num_nodes)
-    neg_score = model.rotate.score_triples(z, neg_edge_index, edge_type)
+    for start in range(0, E, chunk_size):
+        end = min(start + chunk_size, E)
 
-    loss_pos = -F.logsigmoid(pos_score).mean()
-    loss_neg = -F.logsigmoid(-neg_score).mean()
+        ei = edge_index[start:end]
+        et = edge_type[start:end]
 
-    return loss_pos + loss_neg
+        pos_score = model.rotate.score_triples(z, ei, et)
+        neg_ei = sample_negative_edges(ei, num_nodes)
+        neg_score = model.rotate.score_triples(z, neg_ei, et)
 
-def train_one_epoch_GAT_RotatE(model, loader, A_single_graph, edge_index, edge_type, optimizer, criterion, lambda_rotate=0.1):
+        loss_pos = -F.logsigmoid(pos_score).mean()
+        loss_neg = -F.logsigmoid(-neg_score).mean()
+        loss = loss_pos + loss_neg
+
+        total_loss = total_loss + loss
+        n_chunks += 1
+
+    return total_loss / n_chunks
+
+def build_edges(adj_matrix):
+    edge_index_list = []
+    edge_type_list = []
+
+    R = adj_matrix.shape[-1]
+    for r in range(R):
+        adj_r = adj_matrix[:, :, r]
+        edges = (adj_r > 0).nonzero(as_tuple=False)
+
+        # remove self loops
+        edges = edges[edges[:, 0] != edges[:, 1]]
+
+        edge_index_list.append(edges)
+        edge_type_list.append(
+            torch.full((edges.shape[0],), r, dtype=torch.long)
+        )
+
+    edge_index = torch.cat(edge_index_list, dim=0)
+    edge_type = torch.cat(edge_type_list, dim=0)
+    return edge_index, edge_type
+
+
+
+def train_one_epoch_GAT_RotatE(model, loader, A_single_graph, edge_index, edge_type, optimizer, lambda_rotate=0.1):
     model.train()
     total_loss = 0.0
     total_count = 0
@@ -443,7 +480,7 @@ def train_one_epoch_GAT_RotatE(model, loader, A_single_graph, edge_index, edge_t
 
         y_hat, z = model(x_batch, A_single_graph)
 
-        loss_forecast = F.mse_loss(y_hat, yb)
+        loss_forecast = F.mse_loss(y_hat, y_batch)
         loss_graph = rotate_loss(model, z, edge_index, edge_type)
 
         total_loss += loss_forecast + lambda_rotate * loss_graph
