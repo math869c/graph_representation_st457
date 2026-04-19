@@ -9,8 +9,9 @@ from model_classes import *
 import torch.optim as optim
 # order of code 
 # 1. create features and data to run models
-# 2. training functions for LSTM and TGC
-# 3. training functions for GAT
+# 2. training functions for LSTM
+# 3. training functions for TGC
+# 4. training functions for GAT
 # 5. training functions for GAT+trans
 # 6. metrics functions
 # 7. Plotting functions for evalu
@@ -219,7 +220,7 @@ def train_with_validation_LSTM(model, train_loader, val_loader, criterion, optim
 
 
 
-# 3. training TGC
+# 3. training functions for TGC
 # functions for training, evaluating and predicting
 def train_one_epoch(model, loader, A, optimizer, criterion):
     model.train()
@@ -345,7 +346,7 @@ def training_loop_TGC(train_loader, val_loader, test_loader, y_test, adj_matrix,
         
     return dict_adj_matrices
 
-# 3. training functions for GAT
+# 4. training functions for GAT
 def train_one_epoch_GAT(model, loader, A_single_graph, optimizer, criterion):
     model.train()
     total_loss = 0.0
