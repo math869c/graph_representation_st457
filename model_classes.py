@@ -211,7 +211,7 @@ class GATLayer(nn.Module):
             attn_matrix[mask[..., None].repeat(1, 1, 1, self.num_heads)] = attn_logits.reshape(-1)
 
             # Weighted average of attention
-            attn_probs = nn.softmax(attn_matrix, dim=2)
+            attn_probs = nn.functional.softmax(attn_matrix, dim=2)
 
             if print_attn_probs:
                 print(
@@ -259,7 +259,7 @@ class GAT(nn.Module):
 
     def forward(self, x, adj):
         x = self.gat1(x, adj)      # [B, N, c_hidden]
-        x = nn.elu(x)
+        x = nn.functional.elu(x)
         x = self.gat2(x, adj)      # [B, N, c_out]
         x = x.squeeze(-1)
         return x

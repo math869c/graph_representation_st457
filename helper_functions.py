@@ -175,7 +175,7 @@ def predict_final_model(model, dataloader):
 
     return np.concatenate(preds, axis=0)
 
-def train_with_validation(model, train_loader, val_loader, criterion, optimizer, epochs=100, patience=10):
+def train_with_validation_LSTM(model, train_loader, val_loader, criterion, optimizer, epochs=100, patience=10):
     best_val_loss = float("inf")
     best_state_dict = None
     patience_counter = 0
