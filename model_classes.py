@@ -326,5 +326,6 @@ class GAT_RotatE(nn.Module):
 
     def forward(self, x, adj):
         z = self.encoder(x, adj)                 # (B, N, 2*emb_dim)
-        y_hat = self.regressor(z).squeeze(-1)   # (B, N)
+        z = self.rotate(z, adj)                  # relation transformation embedding      
+        y_hat = self.regressor(z).squeeze(-1)    # (B, N)
         return y_hat, z
